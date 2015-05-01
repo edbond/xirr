@@ -8,35 +8,20 @@ module Xirr
     # @return [BigDecimal]
     # @param midpoint [Float]
     # An initial guess rate will override the {Cashflow#irr_guess}
-    def xirr(midpoint = nil)
+    def xirr midpoint, options
 
       # Initial values
-      left = [BigDecimal.new(-0.99, Xirr::PRECISION), cf.irr_guess].min
-      right = [BigDecimal.new(9.99, Xirr::PRECISION), cf.irr_guess + 1].max
+      left  = [BigDecimal.new(-0.99999999, Xirr::PRECISION), cf.irr_guess].min
+      right = [BigDecimal.new(9.99999999, Xirr::PRECISION), cf.irr_guess + 1].max
       @original_right = right
       midpoint ||= cf.irr_guess
-      runs = 0
 
-      # Loops until difference is within error margin
-      while ((right - left).abs > Xirr::EPS && runs < Xirr.config.iteration_limit.to_i) do
+      midpoint, runs = loop_rates(left, midpoint, right, options[:iteration_limit])
 
-        runs += 1
-        left, midpoint, right = bisection(left, midpoint, right)
-
-      end
-
-      if runs >= Xirr.config.iteration_limit.to_i
-        raise ArgumentError, "Did not converge after #{runs} tries."
-      end
-
-      # If enabled, will retry XIRR with NewtonMethod
-      if Xirr::FALLBACK && right_limit_reached?(midpoint)
-        return NewtonMethod.new(cf).xirr
-      end
-
-      return midpoint.round Xirr::PRECISION
+      get_answer(midpoint, options, runs)
 
     end
+
 
     private
 
@@ -55,12 +40,12 @@ module Xirr
     def bisection(left, midpoint, right)
       _left, _mid = npv_positive?(left), npv_positive?(midpoint)
       if _left && _mid
-        return left, left, left if npv_positive?(right) # Not Enough Precision in the left to find the IRR
+        return left, left, left, true if npv_positive?(right) # Not Enough Precision in the left to find the IRR
       end
       if _left == _mid
-        return midpoint, format_irr(midpoint, right), right # Result is to the Right
+        return midpoint, format_irr(midpoint, right), right, false # Result is to the Right
       else
-        return left, format_irr(left, midpoint), midpoint # Result is to the Left
+        return left, format_irr(left, midpoint), midpoint, false # Result is to the Left
       end
     end
 
@@ -77,6 +62,33 @@ module Xirr
     def format_irr(left, right)
       irr = (right+left) / 2
     end
+
+    def get_answer(midpoint, options, runs)
+      if runs >= options[:iteration_limit]
+        if options[:raise_exception]
+          raise ArgumentError, "Did not converge after #{runs} tries."
+        else
+          nil
+        end
+      else
+        midpoint.round Xirr::PRECISION
+      end
+    end
+
+    def loop_rates(left, midpoint, right, iteration_limit)
+      runs = 0
+      while (right - left).abs > Xirr::EPS && runs < iteration_limit do
+        runs                               += 1
+        left, midpoint, right, should_stop = bisection(left, midpoint, right)
+        break if should_stop
+        if right_limit_reached?(midpoint)
+          right           = right * 2
+          @original_right = @original_right * 2
+        end
+      end
+      return midpoint, runs
+    end
+
 
   end
 

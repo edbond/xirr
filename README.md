@@ -1,5 +1,5 @@
 # Xirr
-[![Build Status](https://travis-ci.org/tubedude/xirr.svg)](https://travis-ci.org/tubedude/xirr)[![Coverage Status](https://img.shields.io/coveralls/tubedude/xirr.svg)](https://coveralls.io/r/tubedude/xirr)[![Code Climate](https://codeclimate.com/github/tubedude/xirr/badges/gpa.svg)](https://codeclimate.com/github/tubedude/xirr)[![Dependency Status](https://gemnasium.com/tubedude/xirr.svg)](https://gemnasium.com/tubedude/xirr)
+[![Build Status](https://travis-ci.org/tubedude/xirr.svg)](https://travis-ci.org/tubedude/xirr)[![Coverage Status](https://coveralls.io/repos/tubedude/xirr/badge.svg?branch=master)](https://coveralls.io/r/tubedude/xirr?branch=master)[![Code Climate](https://codeclimate.com/github/tubedude/xirr/badges/gpa.svg)](https://codeclimate.com/github/tubedude/xirr)[![Dependency Status](https://gemnasium.com/tubedude/xirr.svg)](https://gemnasium.com/tubedude/xirr)
 
 
 This is a gem to calculate XIRR on Bisection Method or Newton Method.
@@ -29,6 +29,15 @@ Or install it yourself as:
     cf << Transaction.new( 4500, date: '2015-12-01'.to_date)
     cf.xirr
     # 0.25159694345042327 # [BigDecimal]
+
+    flow = []
+    flow << Transaction.new(-1000,  date: '2014-01-01'.to_date)
+    flow << Transaction.new(-2000,  date: '2014-03-01'.to_date)
+    flow << Transaction.new( 4500, date: '2015-12-01'.to_date)
+
+    cf = Cashflow.new flow: flow
+    cf.xirr
+
 
 ## Configuration
 

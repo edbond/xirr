@@ -11,10 +11,10 @@ module Xirr
     class Function
       values = {
           eps: Xirr::EPS,
-          one: "1.0",
-          two: "2.0",
-          ten: "10.0",
-          zero: "0.0"
+          one:  '1.0',
+          two:  '2.0',
+          ten:  '10.0',
+          zero: '0.0'
       }
 
       # define default values
@@ -26,7 +26,7 @@ module Xirr
 
       # @param transactions [Cashflow]
       # @param function [Symbol]
-      # Initializes the Function with the Cashflow it will use as data source and the funcion to reduce it.
+      # Initializes the Function with the Cashflow it will use as data source and the function to reduce it.
       def initialize(transactions, function)
         @transactions = transactions
         @function = function
@@ -43,12 +43,16 @@ module Xirr
     # Calculates XIRR using Newton method
     # @return [BigDecimal]
     # @param guess [Float]
-    def xirr(guess=nil)
+    def xirr guess, options
       func = Function.new(self, :xnpv)
-      rate = [guess || cf.irr_guess.to_f]
-      nlsolve(func, rate)
-      rate[0].round Xirr::PRECISION
+      rate = [guess || cf.irr_guess]
+      begin
+        nlsolve(func, rate)
+        rate[0] <= -1 ? nil : rate[0].round(Xirr::PRECISION)
+          # rate[0].round(Xirr::PRECISION)
+      rescue
+        nil
+      end
     end
-
   end
 end

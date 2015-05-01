@@ -3,6 +3,7 @@ module Xirr
   # Expands [Array] to store a set of transactions which will be used to calculate the XIRR
   # @note A Cashflow should consist of at least two transactions, one positive and one negative.
   class Cashflow < Array
+    attr_reader :raise_exception, :fallback, :iteration_limit, :options
 
     # @param args [Transaction]
     # @example Creating a Cashflow
@@ -11,15 +12,18 @@ module Xirr
     #   cf << Transaction.new(-1234, date: '2013-03-31'.to_date)
     #   Or
     #   cf = Cashflow.new Transaction.new( 1000, date: '2013-01-01'.to_date), Transaction.new(-1234, date: '2013-03-31'.to_date)
-    def initialize(*args)
-      args.each { |a| self << a }
+    def initialize(flow: [], period: Xirr::PERIOD, ** options)
+      @period   = period
+      @fallback = options[:fallback] || Xirr::FALLBACK
+      @options  = options
+      self << flow
       self.flatten!
     end
 
     # Check if Cashflow is invalid
     # @return [Boolean]
     def invalid?
-      positives.empty? || negatives.empty?
+      inflow.empty? || outflows.empty?
     end
 
     # Inverse of #invalid?
@@ -43,33 +47,57 @@ module Xirr
     # Calculates a simple IRR guess based on period of investment and multiples.
     # @return [Float]
     def irr_guess
-      valid? ? ((multiple ** (1 / years_of_investment)) - 1).round(3) : false
+      return @irr_guess = 0.0 if periods_of_investment.zero?
+      @irr_guess = valid? ? ((multiple ** (1 / periods_of_investment)) - 1).round(3) : false
+      @irr_guess == 1.0/0 ? 0.0 : @irr_guess
     end
 
     # @param guess [Float]
     # @param method [Symbol]
     # @return [Float]
-    # Finds the XIRR according to the method provided. Default to Bisection
-    def xirr_with_exception(guess = nil, method = Xirr.config.default_method)
-      if valid?
-        choose_(method).send :xirr, guess
-      else
-        raise ArgumentError, invalid_message
-      end
-    end
-
-    # Calls XIRR but throws no exception and returns with 0
-    # @param guess [Float]
-    # @param method [Symbol]
-    # @return [Float]
-    def xirr(guess = nil, method = Xirr.config.default_method)
+    def xirr(guess: nil, method: nil, ** options)
+      method, options = process_options(method, options)
       if invalid?
+        raise ArgumentError, invalid_message if options[:raise_exception]
         BigDecimal.new(0, Xirr::PRECISION)
       else
-        xirr_with_exception(guess, method)
+        xirr = choose_(method).send :xirr, guess, options
+        xirr = choose_(other_calculation_method(method)).send(:xirr, guess, options) if xirr.nil? && fallback
+        xirr || Xirr::REPLACE_FOR_NIL
       end
     end
 
+    def process_options(method, options)
+      @temporary_period         = options[:period]
+      options[:raise_exception] ||= @options[:raise_exception] || Xirr::RAISE_EXCEPTION
+      options[:iteration_limit] ||= @options[:iteration_limit] || Xirr::ITERATION_LIMIT
+      return switch_fallback(method), options
+    end
+
+    # If method is defined it will turn off fallback
+    # it return either the provided method or the system default
+    # @param method [Symbol]
+    # @return [Symbol]
+    def switch_fallback method
+      if method
+        @fallback = false
+        method
+      else
+        @fallback = Xirr::FALLBACK
+        Xirr::DEFAULT_METHOD
+      end
+    end
+
+    def other_calculation_method(method)
+      method == :newton_method ? :bisection : :newton_method
+    end
+
+    def compact_cf
+      # self
+      compact = Hash.new 0
+      self.each { |flow| compact[flow.date] += flow.amount }
+      Cashflow.new flow: compact.map { |key, value| Transaction.new(value, date: key) }, options: options, period: period
+    end
 
     # First investment date
     # @return [Time]
@@ -80,8 +108,12 @@ module Xirr
     # @return [String]
     # Error message depending on the missing transaction
     def invalid_message
-      return 'No positive transaction' if positives.empty?
-      return 'No negative transaction' if negatives.empty?
+      return 'No positive transaction' if inflow.empty?
+      return 'No negative transaction' if outflows.empty?
+    end
+
+    def period
+      @temporary_period || @period
     end
 
     private
@@ -92,9 +124,9 @@ module Xirr
     def choose_(method)
       case method
         when :bisection
-          Bisection.new(self)
+          Bisection.new compact_cf
         when :newton_method
-          NewtonMethod.new(self)
+          NewtonMethod.new compact_cf
         else
           raise ArgumentError, "There is no method called #{method} "
       end
@@ -103,7 +135,7 @@ module Xirr
     # @api private
     # Sorts the {Cashflow} by date ascending
     #   and finds the signal of the first transaction.
-    # This implies the first transaction is a disembursement
+    # This implies the first transaction is a disbursement
     # @return [Integer]
     def first_transaction_direction
       self.sort! { |x, y| x.date <=> y.date }
@@ -116,43 +148,35 @@ module Xirr
     # @api private
     # @return [Float]
     def multiple
-      result = positives.sum(&:amount) / -negatives.sum(&:amount)
-      first_transaction_direction > 0 ? result : 1 / result
+      result = inflow.sum(&:amount) / -outflows.sum(&:amount)
+      first_transaction_positive? ? result : 1 / result
+    end
+
+    def first_transaction_positive?
+      first_transaction_direction > 0
     end
 
     # @api private
     # Counts how many years from first to last transaction in the cashflow
     # @return
-    def years_of_investment
-      (max_date - min_date) / (365).to_f
+    def periods_of_investment
+      (max_date - min_date) / period
     end
 
     # @api private
     # @return [Array]
-    # @see #negatives
-    # @see #split_transactions
-    # Finds all transactions income from Cashflow
-    def positives
-      split_transactions
-      @positives
+    # @see #outflows
+    # Selects all positives transactions from Cashflow
+    def inflow
+      self.select { |x| x.amount < 0 }
     end
 
     # @api private
     # @return [Array]
-    # @see #positives
-    # @see #split_transactions
-    # Finds all transactions investments from Cashflow
-    def negatives
-      split_transactions
-      @negatives
-    end
-
-    # @api private
-    # @see #positives
-    # @see #negatives
-    # Uses partition to separate the investment transactions Negatives and the income transactions (Positives)
-    def split_transactions
-      @negatives, @positives = self.partition { |x| x.amount > 0 } # Inverted as negative amount is good
+    # @see #inflow
+    # Selects all negatives transactions from Cashflow
+    def outflows
+      self.select { |x| x.amount > 0 }
     end
 
   end
